@@ -29,6 +29,7 @@
 #include "Core/Core.h"
 #include "Core/DolphinAnalytics.h"
 #include "Core/System.h"
+#include "Core/HW/NDSLan.h"
 
 #include "DolphinQt/Host.h"
 #include "DolphinQt/MainWindow.h"
@@ -176,6 +177,10 @@ int main(int argc, char* argv[])
 
   // Hook up translations
   Translation::Initialize();
+
+  // Initialize melonDS host session
+  NDS::MPInterface::Set(NDS::MPInterfaceType::MPInterface_LAN);
+  ((NDS::LAN&)NDS::MPInterface::Get()).StartHost("Wii", 4);
 
   // Whenever the event loop is about to go to sleep, dispatch the jobs
   // queued in the Core first.

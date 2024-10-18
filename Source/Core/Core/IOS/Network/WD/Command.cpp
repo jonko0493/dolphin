@@ -16,6 +16,8 @@
 #include "Core/IOS/Network/MACUtils.h"
 #include "Core/System.h"
 
+#define lan() ((NDS::LAN&)NDS::MPInterface::Get())
+
 namespace IOS::HLE
 {
 namespace
@@ -28,12 +30,13 @@ constexpr u16 LegalNitroChannelMask = 0b0011'1111'1111'1110u;
 
 u16 SelectWifiChannel(u16 enabled_channels_mask, u16 current_channel)
 {
-  const Common::BitSet<u16> enabled_channels{enabled_channels_mask & LegalChannelMask};
+  const BitSet16 enabled_channels(enabled_channels_mask & LegalChannelMask);
   u16 next_channel = current_channel;
   for (int i = 0; i < 16; ++i)
   {
     next_channel = (next_channel + 3) % 16;
-    if (enabled_channels[next_channel])
+    u16 test = enabled_channels[next_channel];
+    if (test)
       return next_channel;
   }
   // This does not make a lot of sense, but it is what WD does.
@@ -82,6 +85,8 @@ void NetWDCommandDevice::Update()
 {
   Device::Update();
   ProcessRecvRequests();
+  lan().Process();
+  m_wifi.USTimer(0);
   HandleStateChange();
 }
 
@@ -94,11 +99,11 @@ void NetWDCommandDevice::ProcessRecvRequests()
   // Therefore, requests are left pending to simulate the situation where there is nothing to send.
 
   // All pending requests must still be processed when the handle to the resource manager is closed.
-  const bool force_process = m_clear_all_requests.TestAndClear();
+  //const bool force_process = m_clear_all_requests.TestAndClear();
 
-  const auto process_queue = [&](std::deque<u32>& queue) {
-    if (!force_process)
-      return;
+  const auto process_queue = [&](std::deque<IOCtlVRequest>& queue) {
+    //if (!force_process)
+    //  return;
 
     while (!queue.empty())
     {
@@ -115,11 +120,67 @@ void NetWDCommandDevice::ProcessRecvRequests()
       {
         // TODO: Frame/notification data would be copied here.
         // And result would be set to the data length or to an error code.
-        result = 0;
+        if (!request.io_vectors.empty() && m_status == Status::ScanningForDS)
+        {
+          auto& memory = GetSystem().GetMemory();
+          result = 0;
+
+          for (int i = 0; i < request.io_vectors.size(); i++)
+          {
+            u16* packetData = new u16[request.io_vectors[i].size / 2];
+
+            memory.CopyFromEmu(packetData, request.io_vectors[i].address,
+                               request.io_vectors[i].size);
+            for (u32 j = 0; j < request.io_vectors[i].size / 2; j++)
+            {
+              m_wifi.Write((m_wifi.TXSlots[m_currentSlot]).Addr + 0x4000 + j, packetData[j]);
+            }
+            m_wifi.Write(m_wifi.W_USCountCnt, 0x0001);
+            m_wifi.Write(m_wifi.W_USCompareCnt, 0x0001);
+            m_wifi.Write(m_wifi.W_TXSlotLoc3, 0x8000);
+            m_wifi.Write(m_wifi.W_RXCnt, 0x8000);
+            u16 txbusy = 0x0002;
+            switch (m_currentSlot)
+            {
+            case 5:
+              txbusy = 0x0080;
+              break;
+            case 4:
+              txbusy = 0x0010;
+              break;
+            case 3:
+              txbusy = 0x0008;
+              break;
+            case 2:
+              txbusy = 0x0004;
+              break;
+            case 1:
+              txbusy = 0x0002;
+              break;
+            case 0:
+              txbusy = 0x0001;
+              break;
+            }
+            m_wifi.Write(m_wifi.W_TXBusy, txbusy);
+            if (m_currentSlot == 2)
+            {
+              m_currentSlot = 3;
+            }
+            else
+            {
+              m_currentSlot = 2;
+            }
+            //lan().SendPacket(0, packetData, request.io_vectors[i].size + 12, Common::Timer::NowUs());
+          }
+        }
+        else
+        {
+          result = 0;
+        }
       }
 
-      INFO_LOG_FMT(IOS_NET, "Processed request {:08x} (result {:08x})", request, result);
-      GetEmulationKernel().EnqueueIPCReply(Request{system, request}, result);
+      INFO_LOG_FMT(IOS_NET, "Processed request {:08x} (result {:08x})", request.address, result);
+      GetEmulationKernel().EnqueueIPCReply(Request{system, request.address}, result);
       queue.pop_front();
     }
   };
@@ -151,6 +212,12 @@ void NetWDCommandDevice::HandleStateChange()
     case Status::ScanningForDS:
       // This is supposed to set a bunch of Wi-Fi driver parameters and initiate a scan.
       m_status = Status::ScanningForDS;
+      m_wifi.Reset();
+      m_wifi.TXCurSlot = 1;
+      m_wifi.Write(m_wifi.W_TXSlotBeacon, 0x8000);
+      m_wifi.Write(m_wifi.W_USCompareCnt, 0x0003);
+      m_wifi.Write(m_wifi.W_BeaconCount1, 0x0001);
+      m_wifi.Write(m_wifi.W_RFData2, 0x0001);
       break;
     case Status::Idle:
       break;
@@ -159,6 +226,7 @@ void NetWDCommandDevice::HandleStateChange()
 
   case Status::ScanningForDS:
     m_status = Status::Idle;
+    m_wifi.Reset();
     break;
 
   case Status::ScanningForAOSSAccessPoint:
@@ -181,8 +249,6 @@ void NetWDCommandDevice::DoState(PointerWrap& p)
   p.Do(m_target_status);
   p.Do(m_nitro_enabled_channels);
   p.Do(m_info);
-  p.Do(m_recv_frame_requests);
-  p.Do(m_recv_notification_requests);
 }
 
 std::optional<IPCReply> NetWDCommandDevice::Open(const OpenRequest& request)
@@ -372,11 +438,11 @@ std::optional<IPCReply> NetWDCommandDevice::IOCtlV(const IOCtlVRequest& request)
     return GetInfo(request);
 
   case IOCTLV_WD_RECV_FRAME:
-    m_recv_frame_requests.emplace_back(request.address);
+    m_recv_frame_requests.emplace_back(request);
     return std::nullopt;
 
   case IOCTLV_WD_RECV_NOTIFICATION:
-    m_recv_notification_requests.emplace_back(request.address);
+    m_recv_notification_requests.emplace_back(request);
     return std::nullopt;
 
   case IOCTLV_WD_SET_CONFIG:
