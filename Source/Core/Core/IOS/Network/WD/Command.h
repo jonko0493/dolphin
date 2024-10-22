@@ -14,8 +14,6 @@
 #include "Core/IOS/Device.h"
 #include "Core/HW/NDSLan.h"
 
-#include "Wifi.h"
-
 namespace IOS::HLE::WD
 {
 // Values 2, 4, 5, 6 exist as well but are not known to be used by games, the Mii Channel
@@ -175,9 +173,6 @@ private:
   Common::Flag m_clear_all_requests;
   std::deque<IOCtlVRequest> m_recv_frame_requests;
   std::deque<IOCtlVRequest> m_recv_notification_requests;
-
-  WD::Wifi m_wifi = WD::Wifi();
-  u32 m_currentSlot = 2;
 };
 }  // namespace IOS::HLE
 

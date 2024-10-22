@@ -74,12 +74,10 @@
   <ItemGroup>
     <ClCompile Include="Core\HW\NDSLan.cpp" />
     <ClCompile Include="Core\HW\NDSMPInterface.cpp" />
-    <ClCompile Include="Core\IOS\Network\WD\Wifi.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Core\HW\NDSLan.h" />
     <ClInclude Include="Core\HW\NDSMPInterface.h" />
-    <ClInclude Include="Core\IOS\Network\WD\Wifi.h" />
   </ItemGroup>
   <UsingTask TaskName="GetProductVersion" TaskFactory="CodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
     <ParameterGroup>

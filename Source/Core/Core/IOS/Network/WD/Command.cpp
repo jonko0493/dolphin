@@ -86,7 +86,6 @@ void NetWDCommandDevice::Update()
   Device::Update();
   ProcessRecvRequests();
   lan().Process();
-  m_wifi.USTimer(0);
   HandleStateChange();
 }
 
@@ -101,10 +100,11 @@ void NetWDCommandDevice::ProcessRecvRequests()
   // All pending requests must still be processed when the handle to the resource manager is closed.
   //const bool force_process = m_clear_all_requests.TestAndClear();
 
+  m_info.channel = SelectWifiChannel(0b0010'0000'1000'1010, m_info.channel);
+
   const auto process_queue = [&](std::deque<IOCtlVRequest>& queue) {
     //if (!force_process)
     //  return;
-
     while (!queue.empty())
     {
       const auto request = queue.front();
@@ -122,55 +122,26 @@ void NetWDCommandDevice::ProcessRecvRequests()
         // And result would be set to the data length or to an error code.
         if (!request.io_vectors.empty() && m_status == Status::ScanningForDS)
         {
-          auto& memory = GetSystem().GetMemory();
+          auto& memory = system.GetMemory();
           result = 0;
 
           for (int i = 0; i < request.io_vectors.size(); i++)
           {
-            u16* packetData = new u16[request.io_vectors[i].size / 2];
+            if (request.io_vectors[i].size < 1380)
+            {
+              u8* packetData = new u8[request.io_vectors[i].size + 12];
 
-            memory.CopyFromEmu(packetData, request.io_vectors[i].address,
-                               request.io_vectors[i].size);
-            for (u32 j = 0; j < request.io_vectors[i].size / 2; j++)
-            {
-              m_wifi.Write((m_wifi.TXSlots[m_currentSlot]).Addr + 0x4000 + j, packetData[j]);
+              packetData[9] = m_info.channel;
+              ((u16*)packetData)[5] = request.io_vectors[i].size;
+              memory.CopyFromEmu(packetData + 12, request.io_vectors[i].address,
+                                 request.io_vectors[i].size);
+              lan().SendPacket(0, packetData, request.io_vectors[i].size + 12,
+                               Common::Timer::NowUs());
+              u8* replyData = new u8[1000];
+              u16 replySize = lan().RecvReplies(0, replyData, Common::Timer::NowUs(), 0);
+              memory.CopyToEmu(request.io_vectors[i].address, replyData, replySize);
+
             }
-            m_wifi.Write(m_wifi.W_USCountCnt, 0x0001);
-            m_wifi.Write(m_wifi.W_USCompareCnt, 0x0001);
-            m_wifi.Write(m_wifi.W_TXSlotLoc3, 0x8000);
-            m_wifi.Write(m_wifi.W_RXCnt, 0x8000);
-            u16 txbusy = 0x0002;
-            switch (m_currentSlot)
-            {
-            case 5:
-              txbusy = 0x0080;
-              break;
-            case 4:
-              txbusy = 0x0010;
-              break;
-            case 3:
-              txbusy = 0x0008;
-              break;
-            case 2:
-              txbusy = 0x0004;
-              break;
-            case 1:
-              txbusy = 0x0002;
-              break;
-            case 0:
-              txbusy = 0x0001;
-              break;
-            }
-            m_wifi.Write(m_wifi.W_TXBusy, txbusy);
-            if (m_currentSlot == 2)
-            {
-              m_currentSlot = 3;
-            }
-            else
-            {
-              m_currentSlot = 2;
-            }
-            //lan().SendPacket(0, packetData, request.io_vectors[i].size + 12, Common::Timer::NowUs());
           }
         }
         else
@@ -212,12 +183,6 @@ void NetWDCommandDevice::HandleStateChange()
     case Status::ScanningForDS:
       // This is supposed to set a bunch of Wi-Fi driver parameters and initiate a scan.
       m_status = Status::ScanningForDS;
-      m_wifi.Reset();
-      m_wifi.TXCurSlot = 1;
-      m_wifi.Write(m_wifi.W_TXSlotBeacon, 0x8000);
-      m_wifi.Write(m_wifi.W_USCompareCnt, 0x0003);
-      m_wifi.Write(m_wifi.W_BeaconCount1, 0x0001);
-      m_wifi.Write(m_wifi.W_RFData2, 0x0001);
       break;
     case Status::Idle:
       break;
@@ -226,7 +191,6 @@ void NetWDCommandDevice::HandleStateChange()
 
   case Status::ScanningForDS:
     m_status = Status::Idle;
-    m_wifi.Reset();
     break;
 
   case Status::ScanningForAOSSAccessPoint:
