@@ -84,27 +84,19 @@ NetWDCommandDevice::NetWDCommandDevice(EmulationKernel& ios, const std::string& 
 void NetWDCommandDevice::Update()
 {
   Device::Update();
+  ProcessSendRequests();
   ProcessRecvRequests();
   lan().Process();
   HandleStateChange();
 }
 
-void NetWDCommandDevice::ProcessRecvRequests()
+void NetWDCommandDevice::ProcessSendRequests()
 {
   auto& system = GetSystem();
+  auto& memory = system.GetMemory();
 
-  // Because we currently do not actually emulate the wireless driver, we have no frames
-  // and no notification data that could be used to reply to requests.
-  // Therefore, requests are left pending to simulate the situation where there is nothing to send.
-
-  // All pending requests must still be processed when the handle to the resource manager is closed.
-  //const bool force_process = m_clear_all_requests.TestAndClear();
-
-  m_info.channel = SelectWifiChannel(0b0010'0000'1000'1010, m_info.channel);
-
-  const auto process_queue = [&](std::deque<IOCtlVRequest>& queue) {
-    //if (!force_process)
-    //  return;
+  const auto process_queue = [&](std::deque<IOCtlVRequest>& queue)
+  {
     while (!queue.empty())
     {
       const auto request = queue.front();
@@ -118,35 +110,56 @@ void NetWDCommandDevice::ProcessRecvRequests()
       }
       else
       {
-        // TODO: Frame/notification data would be copied here.
-        // And result would be set to the data length or to an error code.
-        if (!request.io_vectors.empty() && m_status == Status::ScanningForDS)
+        for (int i = 0; i < request.io_vectors.size(); i++)
         {
-          auto& memory = system.GetMemory();
-          result = 0;
+          u8* packetData = new u8[request.io_vectors[i].size + 12];
 
-          for (int i = 0; i < request.io_vectors.size(); i++)
-          {
-            if (request.io_vectors[i].size < 1380)
-            {
-              u8* packetData = new u8[request.io_vectors[i].size + 12];
-
-              packetData[9] = m_info.channel;
-              ((u16*)packetData)[5] = request.io_vectors[i].size;
-              memory.CopyFromEmu(packetData + 12, request.io_vectors[i].address,
-                                 request.io_vectors[i].size);
-              lan().SendPacket(0, packetData, request.io_vectors[i].size + 12,
-                               Common::Timer::NowUs());
-              u8* replyData = new u8[1000];
-              u16 replySize = lan().RecvReplies(0, replyData, Common::Timer::NowUs(), 0);
-              memory.CopyToEmu(request.io_vectors[i].address, replyData, replySize);
-
-            }
-          }
+          packetData[9] = m_info.channel;
+          ((u16*)packetData)[5] = request.io_vectors[i].size;
+          memory.CopyFromEmu(packetData + 12, request.io_vectors[i].address,
+                             request.io_vectors[i].size);
+          lan().SendPacket(0, packetData, request.io_vectors[i].size + 12, Common::Timer::NowUs());
         }
-        else
+
+        INFO_LOG_FMT(IOS_NET, "Processed request {:08x} (result {:08x})", request.address, result);
+        GetEmulationKernel().EnqueueIPCReply(Request{system, request.address}, result);
+        queue.pop_front();
+      }
+    }
+  };
+
+  process_queue(m_send_mp_frame_requests);
+}
+
+void NetWDCommandDevice::ProcessRecvRequests()
+{
+  auto& system = GetSystem();
+  auto& memory = system.GetMemory();
+
+  const auto process_queue = [&](std::deque<IOCtlVRequest>& queue)
+  {
+    while (!queue.empty())
+    {
+      const auto request = queue.front();
+      s32 result;
+
+      // If the resource manager handle is closed while processing a request,
+      // InvalidFd is returned.
+      if (m_ipc_owner_fd < 0)
+      {
+        result = s32(ResultCode::InvalidFd);
+      }
+      else
+      {
+        result = 0;
+        for (int i = 0; i < request.io_vectors.size(); i++)
         {
-          result = 0;
+          u8* packetData = new u8[request.io_vectors[i].size];
+          memset(packetData, 0, request.io_vectors[i].size);
+          u64* timestamp = new u64[1];
+          lan().RecvPacket(0, packetData, timestamp);
+          memory.CopyToEmu(request.io_vectors[i].address, packetData, request.io_vectors[i].size);
+          result += request.io_vectors[i].size;
         }
       }
 
@@ -304,7 +317,8 @@ IPCReply NetWDCommandDevice::GetLinkState(const IOCtlVRequest& request) const
   if (!WD::IsValidMode(m_mode))
     return IPCReply(u32(ResultCode::UnavailableCommand));
 
-  // Contrary to what the name of the ioctl suggests, this returns a boolean, not the current state.
+  // Contrary to what the name of the ioctl suggests, this returns a boolean, not the current
+  // state.
   return IPCReply(u32(m_status == GetTargetStatusForMode(m_mode)));
 }
 
@@ -409,11 +423,14 @@ std::optional<IPCReply> NetWDCommandDevice::IOCtlV(const IOCtlVRequest& request)
     m_recv_notification_requests.emplace_back(request);
     return std::nullopt;
 
+  case IOCTLV_WD_SEND_FRAME:
+  case IOCTLV_WD_MP_SEND_FRAME:
+    m_send_mp_frame_requests.emplace_back(request);
+    return std::nullopt;
+
   case IOCTLV_WD_SET_CONFIG:
   case IOCTLV_WD_GET_CONFIG:
   case IOCTLV_WD_CHANGE_BEACON:
-  case IOCTLV_WD_MP_SEND_FRAME:
-  case IOCTLV_WD_SEND_FRAME:
   case IOCTLV_WD_CALL_WL:
   case IOCTLV_WD_MEASURE_CHANNEL:
   case IOCTLV_WD_GET_LASTERROR:

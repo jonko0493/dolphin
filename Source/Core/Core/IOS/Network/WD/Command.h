@@ -151,6 +151,7 @@ private:
   };
   friend struct fmt::formatter<IOS::HLE::NetWDCommandDevice::Status>;
 
+  void ProcessSendRequests();
   void ProcessRecvRequests();
   void HandleStateChange();
   static Status GetTargetStatusForMode(WD::Mode mode);
@@ -173,6 +174,7 @@ private:
   Common::Flag m_clear_all_requests;
   std::deque<IOCtlVRequest> m_recv_frame_requests;
   std::deque<IOCtlVRequest> m_recv_notification_requests;
+  std::deque<IOCtlVRequest> m_send_mp_frame_requests;
 };
 }  // namespace IOS::HLE
 
