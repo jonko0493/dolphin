@@ -175,41 +175,41 @@ private:
 
   struct Config
   {
-    Common::BigEndianValue<u16> diversityMode{};
-    Common::BigEndianValue<u16> useAntenna{};
-    Common::BigEndianValue<u16> shortRetryLimit{};
-    Common::BigEndianValue<u16> longRetryLimit{};
+    Common::BigEndianValue<u16> diversity_mode{};
+    Common::BigEndianValue<u16> use_antenna{};
+    Common::BigEndianValue<u16> short_retry_limit{};
+    Common::BigEndianValue<u16> long_retry_limit{};
     Common::BigEndianValue<u16> unk4{};
-    Common::BigEndianValue<u16> rtsThreshold{};
-    Common::BigEndianValue<u16> fragThreshold{};
-    Common::BigEndianValue<u16> supportRateSet{};
-    Common::BigEndianValue<u16> basicRateSet{};
-    Common::BigEndianValue<u16> enableChannel{};
+    Common::BigEndianValue<u16> rts_threshold{};
+    Common::BigEndianValue<u16> frag_threshold{};
+    Common::BigEndianValue<u16> support_rate_set{};
+    Common::BigEndianValue<u16> basic_rate_set{};
+    Common::BigEndianValue<u16> enable_channel{};
     
     struct
     {
-      Privacy essStaPrivacy{};
+      Privacy ess_sta_privacy{};
 
       char ssid[32];
       u8 unka2[32];
-      u8 ssidLength;
+      u8 ssid_length;
       u8 unka;
-      Common::BigEndianValue<u16> maxChannelTime{};
+      Common::BigEndianValue<u16> max_channel_time{};
       u8 bssid[6];
       u8 somemac[6];
-    } essSta;
+    } ess_sta;
 
     struct
     {
-      Common::BigEndianValue<u16> connectionTimeout{};
-      Common::BigEndianValue<u16> beaconPeriod{};
-      u8 maxNodes;
-      u8 authAlgorithm;
-      Common::BigEndianValue<u16> beaconNinTagTimestamp{};
+      Common::BigEndianValue<u16> connection_timeout{};
+      Common::BigEndianValue<u16> beacon_period{};
+      u8 max_nodes;
+      u8 auth_algorithm;
+      Common::BigEndianValue<u16> beacon_nin_tag_timestamp{};
       u8 channel;
       u8 unka4[3];
-      u8 beaconNinTagData[128];
-      Privacy mpParentPrivacy{};
+      u8 beacon_nin_tag_data[128];
+      Privacy mp_parent_privacy{};
     } mpParent;
   };
   static_assert(sizeof(Config) == 384);

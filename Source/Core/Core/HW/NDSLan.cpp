@@ -9,7 +9,7 @@
     #define INVALID_SOCKET  (socket_t)-1
 #endif
 
-#include "common/Logging/Log.h"
+#include "Common/Logging/Log.h"
 #include "NDSLAN.h"
 
 namespace NDS

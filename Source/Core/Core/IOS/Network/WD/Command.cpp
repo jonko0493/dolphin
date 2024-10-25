@@ -84,19 +84,19 @@ NetWDCommandDevice::NetWDCommandDevice(EmulationKernel& ios, const std::string& 
 void NetWDCommandDevice::Update()
 {
   Device::Update();
-  if (m_config->mpParent.beaconPeriod > 0)
+  if (m_config->mpParent.beacon_period > 0)
   {
-    if (m_beacon_counter == m_config->mpParent.beaconPeriod)
-    {
+    //if (m_beacon_counter == m_config->mpParent.beacon_period)
+    //{
       SendBeaconPacket();
-      m_beacon_counter = 0;
-    }
-    else
-    {
-      m_beacon_counter++;
-    }
+      //m_config->mpParent.channel = SelectWifiChannel(0x2082, m_config->mpParent.channel);
+  //    m_beacon_counter = 0;
+  //  }
+  //  else
+  //  {
+  //    m_beacon_counter++;
+  //  }
   }
-  SendBeaconPacket();
   ProcessSendRequests();
   ProcessRecvRequests();
   lan().Process();
@@ -108,9 +108,10 @@ void NetWDCommandDevice::SendBeaconPacket()
   u8* packetData = new u8[BEACON_PACKET_SIZE + 12];
   memset(packetData, 0, 12);
   memcpy(packetData + 12, m_beacon_packet, BEACON_PACKET_SIZE);
+  packetData[8] = 0x14;
   packetData[9] = m_config->mpParent.channel == 0 ? 1 : m_config->mpParent.channel;
-  ((u16*)packetData)[5] = 0x70;
-  lan().SendPacket(0, packetData, BEACON_PACKET_SIZE + 12, Common::Timer::NowUs());
+  ((u16*)packetData)[5] = BEACON_PACKET_SIZE;
+  lan().SendCmd(0, packetData, BEACON_PACKET_SIZE + 12, Common::Timer::NowUs());
   delete packetData;
 }
 
@@ -384,12 +385,14 @@ IPCReply NetWDCommandDevice::Disassociate(const IOCtlVRequest& request)
 
 IPCReply NetWDCommandDevice::ChangeBeacon(const IOCtlVRequest& request) const
 {
-  const auto* vector = request.GetVector(0);
+  const auto* vector = request.GetVector(1);
   if (!vector || vector->address == 0)
     return IPCReply(u32(ResultCode::IllegalParameter));
 
   auto& memory = GetSystem().GetMemory();
   memory.CopyFromEmu(m_beacon_packet, vector->address + 0x10, BEACON_PACKET_SIZE);
+  request.Dump(GetSystem(), GetDeviceName(), Common::Log::LogType::IOS_NET,
+               Common::Log::LogLevel::LWARNING);
   return IPCReply(IPC_SUCCESS);
 }
 

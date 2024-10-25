@@ -260,6 +260,10 @@ add_library(core
   HW/MemoryInterface.h
   HW/MMIO.cpp
   HW/MMIO.h
+	HW/NDSLan.cpp
+	HW/NDSLan.h
+	HW/NDSMPInterface.cpp
+	HW/NDSMPInterface.h
   HW/ProcessorInterface.cpp
   HW/ProcessorInterface.h
   HW/SI/SI_Device.cpp
