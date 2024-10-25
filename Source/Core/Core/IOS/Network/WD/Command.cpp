@@ -108,19 +108,7 @@ void NetWDCommandDevice::SendBeaconPacket()
   u8* packetData = new u8[BEACON_PACKET_SIZE + 12];
   memset(packetData, 0, 12);
   memcpy(packetData + 12, m_beacon_packet, BEACON_PACKET_SIZE);
-  packetData[9] = m_current_channel;
-  switch (m_current_channel)
-  {
-  case 1:
-    m_current_channel = 7;
-    break;
-  case 7:
-    m_current_channel = 13;
-    break;
-  case 13:
-    m_current_channel = 1;
-    break;
-  }
+  packetData[9] = m_config->mpParent.channel == 0 ? 1 : m_config->mpParent.channel;
   ((u16*)packetData)[5] = 0x70;
   lan().SendPacket(0, packetData, BEACON_PACKET_SIZE + 12, Common::Timer::NowUs());
   delete packetData;
