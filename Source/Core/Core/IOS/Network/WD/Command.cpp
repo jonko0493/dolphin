@@ -84,10 +84,46 @@ NetWDCommandDevice::NetWDCommandDevice(EmulationKernel& ios, const std::string& 
 void NetWDCommandDevice::Update()
 {
   Device::Update();
+  if (m_config->mpParent.beaconPeriod > 0)
+  {
+    if (m_beacon_counter == m_config->mpParent.beaconPeriod)
+    {
+      SendBeaconPacket();
+      m_beacon_counter = 0;
+    }
+    else
+    {
+      m_beacon_counter++;
+    }
+  }
+  SendBeaconPacket();
   ProcessSendRequests();
   ProcessRecvRequests();
   lan().Process();
   HandleStateChange();
+}
+
+void NetWDCommandDevice::SendBeaconPacket()
+{
+  u8* packetData = new u8[BEACON_PACKET_SIZE + 12];
+  memset(packetData, 0, 12);
+  memcpy(packetData + 12, m_beacon_packet, BEACON_PACKET_SIZE);
+  packetData[9] = m_current_channel;
+  switch (m_current_channel)
+  {
+  case 1:
+    m_current_channel = 7;
+    break;
+  case 7:
+    m_current_channel = 13;
+    break;
+  case 13:
+    m_current_channel = 1;
+    break;
+  }
+  ((u16*)packetData)[5] = 0x70;
+  lan().SendPacket(0, packetData, BEACON_PACKET_SIZE + 12, Common::Timer::NowUs());
+  delete packetData;
 }
 
 void NetWDCommandDevice::ProcessSendRequests()
@@ -108,20 +144,23 @@ void NetWDCommandDevice::ProcessSendRequests()
       {
         result = s32(ResultCode::InvalidFd);
       }
+      else if (request.in_vectors.size() != 2)
+      {
+        result = s32(ResultCode::IllegalParameter);
+      }
       else
       {
-        for (int i = 0; i < request.io_vectors.size(); i++)
-        {
-          u8* packetData = new u8[request.io_vectors[i].size + 12];
-
-          packetData[9] = m_info.channel;
-          ((u16*)packetData)[5] = request.io_vectors[i].size;
-          memory.CopyFromEmu(packetData + 12, request.io_vectors[i].address,
-                             request.io_vectors[i].size);
-          lan().SendPacket(0, packetData, request.io_vectors[i].size + 12, Common::Timer::NowUs());
-        }
+        u8* packetData = new u8[request.in_vectors[1].size + 12];
+        memset(packetData, 0, 12);
+        memory.CopyFromEmu((packetData + 12), request.in_vectors[1].address, request.in_vectors[1].size);
+        packetData[9] = m_config->mpParent.channel;
+        ((u16*)packetData)[5] = request.in_vectors[1].size;
+        lan().SendPacket(0, packetData, request.in_vectors[1].size + 12, Common::Timer::NowUs());
+        delete packetData;
 
         INFO_LOG_FMT(IOS_NET, "Processed request {:08x} (result {:08x})", request.address, result);
+        request.Dump(GetSystem(), GetDeviceName(), Common::Log::LogType::IOS_NET,
+                     Common::Log::LogLevel::LWARNING);
         GetEmulationKernel().EnqueueIPCReply(Request{system, request.address}, result);
         queue.pop_front();
       }
@@ -154,11 +193,11 @@ void NetWDCommandDevice::ProcessRecvRequests()
         result = 0;
         for (int i = 0; i < request.io_vectors.size(); i++)
         {
-          u8* packetData = new u8[request.io_vectors[i].size];
-          memset(packetData, 0, request.io_vectors[i].size);
+          u8* packet_data = new u8[request.io_vectors[i].size];
+          memset(packet_data, 0, request.io_vectors[i].size);
           u64* timestamp = new u64[1];
-          lan().RecvPacket(0, packetData, timestamp);
-          memory.CopyToEmu(request.io_vectors[i].address, packetData, request.io_vectors[i].size);
+          lan().RecvPacket(0, packet_data, timestamp);
+          memory.CopyToEmu(request.io_vectors[i].address, packet_data, request.io_vectors[i].size);
           result += request.io_vectors[i].size;
         }
       }
@@ -355,6 +394,17 @@ IPCReply NetWDCommandDevice::Disassociate(const IOCtlVRequest& request)
   return IPCReply(u32(ResultCode::IllegalParameter));
 }
 
+IPCReply NetWDCommandDevice::ChangeBeacon(const IOCtlVRequest& request) const
+{
+  const auto* vector = request.GetVector(0);
+  if (!vector || vector->address == 0)
+    return IPCReply(u32(ResultCode::IllegalParameter));
+
+  auto& memory = GetSystem().GetMemory();
+  memory.CopyFromEmu(m_beacon_packet, vector->address + 0x10, BEACON_PACKET_SIZE);
+  return IPCReply(IPC_SUCCESS);
+}
+
 IPCReply NetWDCommandDevice::GetInfo(const IOCtlVRequest& request) const
 {
   const auto* vector = request.GetVector(0);
@@ -364,6 +414,32 @@ IPCReply NetWDCommandDevice::GetInfo(const IOCtlVRequest& request) const
   auto& system = GetSystem();
   auto& memory = system.GetMemory();
   memory.CopyToEmu(vector->address, &m_info, sizeof(m_info));
+  return IPCReply(IPC_SUCCESS);
+}
+
+IPCReply NetWDCommandDevice::GetConfig(const IOCtlVRequest& request) const
+{
+  const auto* vector = request.GetVector(0);
+  if (!vector || vector->address == 0)
+    return IPCReply(u32(ResultCode::IllegalParameter));
+
+  auto& system = GetSystem();
+  auto& memory = system.GetMemory();
+  memory.CopyToEmu(vector->address, m_config, sizeof(Config));
+  return IPCReply(IPC_SUCCESS);
+}
+
+IPCReply NetWDCommandDevice::SetConfig(const IOCtlVRequest& request) const
+{
+  const auto* vector = request.GetVector(0);
+  if (!vector || vector->address == 0)
+    return IPCReply(u32(ResultCode::IllegalParameter));
+
+  auto& system = GetSystem();
+  auto& memory = system.GetMemory();
+  memory.CopyFromEmu(m_config, vector->address, sizeof(Config));
+  request.Dump(GetSystem(), GetDeviceName(), Common::Log::LogType::IOS_NET,
+              Common::Log::LogLevel::LWARNING);
   return IPCReply(IPC_SUCCESS);
 }
 
@@ -412,6 +488,13 @@ std::optional<IPCReply> NetWDCommandDevice::IOCtlV(const IOCtlVRequest& request)
   }
   break;
 
+  case IOCTLV_WD_SET_CONFIG:
+    return SetConfig(request);
+    break;
+
+  case IOCTLV_WD_GET_CONFIG:
+    return GetConfig(request);
+
   case IOCTLV_WD_GET_INFO:
     return GetInfo(request);
 
@@ -423,14 +506,14 @@ std::optional<IPCReply> NetWDCommandDevice::IOCtlV(const IOCtlVRequest& request)
     m_recv_notification_requests.emplace_back(request);
     return std::nullopt;
 
+  case IOCTLV_WD_CHANGE_BEACON:
+    return ChangeBeacon(request);
+
   case IOCTLV_WD_SEND_FRAME:
   case IOCTLV_WD_MP_SEND_FRAME:
     m_send_mp_frame_requests.emplace_back(request);
     return std::nullopt;
 
-  case IOCTLV_WD_SET_CONFIG:
-  case IOCTLV_WD_GET_CONFIG:
-  case IOCTLV_WD_CHANGE_BEACON:
   case IOCTLV_WD_CALL_WL:
   case IOCTLV_WD_MEASURE_CHANNEL:
   case IOCTLV_WD_GET_LASTERROR:

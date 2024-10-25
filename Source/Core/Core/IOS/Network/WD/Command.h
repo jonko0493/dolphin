@@ -141,6 +141,78 @@ private:
     std::array<char, 0x80> wl_version{};
   };
   static_assert(sizeof(Info) == 0x90);
+
+  struct Privacy
+  {
+    Common::BigEndianValue<u16> mode{}; // 0 = None, 1 = WEP40, 2 = WEP104, 3 = invalid mode, 4 = WPA-PSK(TKIP), 5 = WPA2-PSK(AES), 6 = WPA-PSK(AES)
+    Common::BigEndianValue<u16> unk;
+    union
+    {
+      struct
+      {
+        Common::BigEndianValue<u16> keyId{};
+      } wep40;
+
+      struct
+      {
+        Common::BigEndianValue<u16> keyId{};
+      } wep104;
+
+      struct
+      {
+        Common::BigEndianValue<u16> keyLen{};
+      } aes;
+
+      struct
+      {
+        Common::BigEndianValue<u16> keyLen{};
+      } tkip;
+    } ;
+
+    u8 unkPriva1[66];
+  };
+  static_assert(sizeof(Privacy) == 72);
+
+  struct Config
+  {
+    Common::BigEndianValue<u16> diversityMode{};
+    Common::BigEndianValue<u16> useAntenna{};
+    Common::BigEndianValue<u16> shortRetryLimit{};
+    Common::BigEndianValue<u16> longRetryLimit{};
+    Common::BigEndianValue<u16> unk4{};
+    Common::BigEndianValue<u16> rtsThreshold{};
+    Common::BigEndianValue<u16> fragThreshold{};
+    Common::BigEndianValue<u16> supportRateSet{};
+    Common::BigEndianValue<u16> basicRateSet{};
+    Common::BigEndianValue<u16> enableChannel{};
+    
+    struct
+    {
+      Privacy essStaPrivacy{};
+
+      char ssid[32];
+      u8 unka2[32];
+      u8 ssidLength;
+      u8 unka;
+      Common::BigEndianValue<u16> maxChannelTime{};
+      u8 bssid[6];
+      u8 somemac[6];
+    } essSta;
+
+    struct
+    {
+      Common::BigEndianValue<u16> connectionTimeout{};
+      Common::BigEndianValue<u16> beaconPeriod{};
+      u8 maxNodes;
+      u8 authAlgorithm;
+      Common::BigEndianValue<u16> beaconNinTagTimestamp{};
+      u8 channel;
+      u8 unka4[3];
+      u8 beaconNinTagData[128];
+      Privacy mpParentPrivacy{};
+    } mpParent;
+  };
+  static_assert(sizeof(Config) == 384);
 #pragma pack(pop)
 
   enum class Status
@@ -151,6 +223,7 @@ private:
   };
   friend struct fmt::formatter<IOS::HLE::NetWDCommandDevice::Status>;
 
+  void SendBeaconPacket();
   void ProcessSendRequests();
   void ProcessRecvRequests();
   void HandleStateChange();
@@ -158,8 +231,11 @@ private:
 
   IPCReply SetLinkState(const IOCtlVRequest& request);
   IPCReply GetLinkState(const IOCtlVRequest& request) const;
+  IPCReply ChangeBeacon(const IOCtlVRequest& request) const;
   IPCReply Disassociate(const IOCtlVRequest& request);
   IPCReply GetInfo(const IOCtlVRequest& request) const;
+  IPCReply GetConfig(const IOCtlVRequest& request) const;
+  IPCReply SetConfig(const IOCtlVRequest& request) const;
 
   s32 m_ipc_owner_fd = -1;
   WD::Mode m_mode = WD::Mode::NotInitialized;
@@ -170,6 +246,11 @@ private:
 
   u16 m_nitro_enabled_channels{};
   Info m_info;
+  Config* m_config = new Config[1];
+  const int BEACON_PACKET_SIZE = 0x70;
+  u8* m_beacon_packet = new u8[BEACON_PACKET_SIZE];
+  s32 m_beacon_counter = 0;
+  s32 m_current_channel = 1;
 
   Common::Flag m_clear_all_requests;
   std::deque<IOCtlVRequest> m_recv_frame_requests;
